@@ -3,13 +3,15 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 import os
 import json
+import time
+time.sleep(0.05)
 
 SAFE_SENDERS = ["Abel P", "LinkedIn", "Indeed", "Capital One", "TFCU"]
 
 def main():
     service = init()
     messages = service.users().messages().list(userId="me", q="category:promotions OR category:social").execute()
-    user_input = input("What do you want to do?\n 'v' - view the messages\n 'x' delete the messages\n 'a' - add a sender to safe sender list\n")
+    user_input = input("What do you want to do?\n 'v' - view the messages\n 'x' delete the messages\n 'a' - add a sender to safe sender list\n 's' - search for sender\n")
     if user_input.lower() == 'v':
         val = input("How many would you like to view? ")
         if val.isdigit():
@@ -23,6 +25,10 @@ def main():
         if addition != '-':
             SAFE_SENDERS.append(addition)
         print(SAFE_SENDERS)
+    elif user_input.lower() == 's':
+        search(service, messages)
+    elif user_input.lower() == 't':
+        test_visual(service, messages)
     else:
         print("Invalid input!")
 
@@ -72,6 +78,15 @@ def delete(service, messages):
     deleted_count = 0
     message_list: list = messages["messages"]
 
+    # -- checks other pages to extend the amount of emails to be deleted
+    while "nextPageToken" in messages:
+        messages = service.users().messages().list(
+            userId="me",
+            q="category:promotions OR category:social",
+            pageToken=messages["nextPageToken"]
+        ).execute()
+        message_list.extend(messages["messages"])
+
     confirm = input(f"About to process {len(message_list)} messages. Continue? (y/n) ")
     if confirm.lower() != 'y':
         return
@@ -89,5 +104,55 @@ def delete(service, messages):
         
     print(f"Done. Deleted {deleted_count} emails!")
     return
+
+# -- searches for a particular sender and shows how many emails from them
+def search(service, messages, query):
+    message_list = messages["messages"]
+    key_search = input("Enter the name of the sender: ")
+    total = 0
+    errors = 0
+
+    # -- checks other pages to extend the amount of emails to be searched
+    while "nextPageToken" in messages:
+        messages = service.users().messages().list(
+            userId="me",
+            q=query,
+            pageToken=messages["nextPageToken"]
+        ).execute()
+        message_list.extend(messages["messages"])
+
+    for message in message_list:
+        message_id = message['id']
+        try:
+            full_message = service.users().messages().get(
+                userId="me", id=message_id, format='metadata', metadataHeaders=['From']
+            ).execute()
+        except Exception as e:
+            print(f"Skipped {message_id}, error: {e}")
+            errors += 1
+            continue
+
+        message_header = full_message["payload"]["headers"]
+        sender_matches = [header["value"] for header in message_header if header["name"] == "From"]
+
+        if not sender_matches:
+            continue  # no "From" header found, skip this message
+
+        sender = sender_matches[0]
+
+        if key_search in sender:
+            print(sender)
+            total += 1
+
+    print(f"Found a total of {total} senders! ({errors} errors)")
+
+
+def test_visual(service, messages):
+    print(messages["messages"])
+
+# TODO: - Need to check how the project should be pushed to github, given that I have my own credentials in this project folder. 
+#           - Also check how the project should be pushed given that we have an environment with libraries imported
+#       - Need to increase the amount of emails that are deleted. 
+
 
 main()
