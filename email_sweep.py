@@ -52,7 +52,7 @@ def init():
 def view(service, messages, amount):
     message_list = messages["messages"]
 
-    for i in range(amount+1):
+    for i in range(amount):
         message = message_list[i]
         message_id = message['id']
         full_message = service.users().messages().get(userId="me", id=message_id).execute() # type dict
@@ -74,12 +74,13 @@ def view(service, messages, amount):
 # #print(json.dumps(full_message, indent=2))
 
 # -- moving the message to trash
-def delete(service, messages):
+def delete(service, messages, limit=500):
     deleted_count = 0
+    errors = 0
     message_list: list = messages["messages"]
 
     # -- checks other pages to extend the amount of emails to be deleted
-    while "nextPageToken" in messages:
+    while "nextPageToken" in messages and len(message_list) < limit:
         messages = service.users().messages().list(
             userId="me",
             q="category:promotions OR category:social",
@@ -87,23 +88,40 @@ def delete(service, messages):
         ).execute()
         message_list.extend(messages["messages"])
 
+    # trim to limit
+    message_list = message_list[:limit]
+
     confirm = input(f"About to process {len(message_list)} messages. Continue? (y/n) ")
     if confirm.lower() != 'y':
         return
     
     for message in message_list:
         message_id = message["id"]
-        full_message = service.users().messages().get(userId="me", id=message_id).execute() # type dict
+        try:
+            full_message = service.users().messages().get(
+                userId="me", id=message_id, format="metadata", metadataHeaders=["From"]
+            ).execute() # type dict
+        except Exception as e:
+            print(f"Skipped {message.id}, error: {e}")
+            errors += 1
+            continue
+
         message_header = full_message["payload"]["headers"]
-        sender = [header["value"] for header in message_header if header["name"] == "From"][0]
+        sender_matches = [header["value"] for header in message_header if header["name"] == "From"]
+
+        if not sender_matches:
+            continue
+            
+        sender = sender_matches[0]
         is_safe = any(safe in sender for safe in SAFE_SENDERS)
+            
         if not is_safe:
             print(f"Deleting: {sender}")
             service.users().messages().trash(userId="me", id=message_id).execute()
             deleted_count += 1
         
-    print(f"Done. Deleted {deleted_count} emails!")
-    return
+    print(f"Done. Deleted {deleted_count} emails! ({errors} errors.)")
+
 
 # -- searches for a particular sender and shows how many emails from them
 def search(service, messages, query):
